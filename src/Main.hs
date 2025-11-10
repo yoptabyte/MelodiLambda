@@ -13,9 +13,8 @@ import Control.Monad (when, void)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, StdStream(..), std_err)
+import System.Process (readProcessWithExitCode, readCreateProcessWithExitCode, proc, StdStream(..), std_err, env)
 import System.Directory
-import System.IO (withFile, IOMode(..), hSetEncoding, hPutStrLn, utf8)
 import System.Exit
 import Control.Concurrent.STM
 import Control.Concurrent.Async
@@ -62,13 +61,18 @@ handleUpdate :: Telegram.Update -> Model -> Maybe Action
 handleUpdate update _ = do
   chatId <- Telegram.updateChatId update
   text <- updateMessageText update
-  pure $ DownloadYouTube chatId text
+  -- Handle /download command or direct YouTube links
+  let url = if "/download" `T.isPrefixOf` text
+            then T.strip $ T.drop 9 text  -- Remove "/download " prefix
+            else text
+  pure $ DownloadYouTube chatId url
 
 -- | Handle bot actions
 handleAction :: Action -> Model -> Bot.Eff Action Model
 handleAction NoOp model = pure model
 
 handleAction (DownloadYouTube chatId url) model = model Bot.<# do
+  -- Only respond to YouTube URLs (ignore other messages in groups)
   if isYouTubeUrl url
     then do
       count <- liftIO $ readTVarIO (activeDownloads model)
@@ -80,7 +84,8 @@ handleAction (DownloadYouTube chatId url) model = model Bot.<# do
           let filename = "downloads/" ++ show (abs $ hash $ T.unpack url) ++ ".mp3"
           void $ liftIO $ async $ processDownload model chatId url filename
     else
-      Bot.replyText "⚠️ Send me a YouTube link!\n\nExample:\nhttps://youtu.be/nOJSmXSFCWk?si=DOQmwjVjQnAIlzYS"
+      -- Don't reply to non-YouTube messages (to avoid spam in groups)
+      return ()
   pure NoOp
 
 -- | Check if URL is from YouTube
@@ -176,29 +181,27 @@ downloadAudio url output = do
 cleanAudioMetadata :: FilePath -> Text -> IO ()
 cleanAudioMetadata filepath title = do
   let tempFile = filepath ++ ".tmp.mp3"  -- Use proper extension
-  let metadataFile = filepath ++ ".metadata.txt"
   
-  -- Write metadata to file with explicit UTF-8 encoding
-  withFile metadataFile WriteMode $ \h -> do
-    hSetEncoding h utf8
-    hPutStrLn h ";FFMETADATA1"
-    hPutStrLn h $ "title=" ++ T.unpack title
-  
-  -- Build ffmpeg command
+  -- Build ffmpeg command with UTF-8 title
+  let titleStr = T.unpack title
   let args = 
         [ "-i", filepath
-        , "-i", metadataFile  -- Read metadata from file
-        , "-map", "0:a"  -- Copy audio stream from first input
+        , "-map", "0:a"  -- Copy audio stream
         , "-map", "0:v?"  -- Copy video stream (thumbnail) if exists
-        , "-map_metadata", "1"  -- Use metadata from second input (metadata file)
         , "-c", "copy"  -- Copy without re-encoding
+        , "-map_metadata", "-1"  -- Strip all metadata
         , "-id3v2_version", "3"  -- Use ID3v2.3
+        , "-metadata", "title=" ++ titleStr
         , "-y", tempFile
         ]
-  (exitCode, _, _) <- readCreateProcessWithExitCode ((proc "ffmpeg" args) { std_err = CreatePipe }) ""
   
-  -- Cleanup metadata file
-  removeFile metadataFile
+  -- Set UTF-8 locale for the process
+  let procConfig = (proc "ffmpeg" args) 
+        { std_err = CreatePipe
+        , env = Just [("LANG", "en_US.UTF-8"), ("LC_ALL", "en_US.UTF-8")]
+        }
+  
+  (exitCode, _, _) <- readCreateProcessWithExitCode procConfig ""
   
   case exitCode of
     ExitSuccess -> do
@@ -230,9 +233,10 @@ configureAudio :: Telegram.SomeChatId -> FilePath -> VideoMetadata -> Maybe File
 configureAudio chatId filepath metadata thumbnailPath =
   let baseAudio = Telegram.defSendAudio chatId (Telegram.InputFile filepath "audio/mpeg")
   in baseAudio
-    { Telegram.sendAudioPerformer = Just (videoArtist metadata)
+    { Telegram.sendAudioTitle = Just (videoTitle metadata)
+    , Telegram.sendAudioPerformer = Just (videoArtist metadata)
     , Telegram.sendAudioThumbnail = Telegram.InputFile <$> thumbnailPath <*> pure "image/jpeg"
-    }  -- Don't set title - Telegram reads from file metadata
+    }  -- Note: Telegram client adds quotes around title in UI - this is normal behavior
 
 -- | Download thumbnail from URL
 downloadThumbnail :: FilePath -> Text -> IO (Maybe FilePath)
