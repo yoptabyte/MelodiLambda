@@ -1,0 +1,17 @@
+resolver: lts-21.25
+
+packages:
+- .
+
+extra-deps:
+- telegram-bot-simple-0.12@sha256:6e0d268458ead1a1da8d651fca1f74a7d640d57e6506496491cdc35d43003528,5585
+
+# Nix integration
+nix:
+  enable: true
+  packages:
+    - zlib
+    - zlib.dev
+    - gmp
+    - gmp.dev
+    - pkg-config

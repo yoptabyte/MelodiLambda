@@ -1,0 +1,16 @@
+.stack-work/
+*.cabal
+*~
+*.swp
+*.mp3
+*.mp4
+*.webm
+*.ogg
+*.m4a
+.env
+downloads/
+
+# Nix
+result
+result-*
+.direnv/
