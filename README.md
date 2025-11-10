@@ -4,13 +4,16 @@ A Haskell-based Telegram bot for converting YouTube videos to audio tracks.
 
 ## ✨ Features
 
-- 🎧 Download audio from YouTube
-- 🔄 Automatic conversion to MP3
+- 🎧 Download audio from YouTube with **best quality**
+- 🔄 Automatic conversion to MP3 (320kbps)
 - 📤 Send tracks directly to Telegram
+- 🖼️ **Automatic thumbnail extraction** from YouTube
+- 📝 **Video title as audio metadata**
 - 🔥 Built with Nix for reproducible builds
 - ⚡ Asynchronous request processing
 - 🛡️ File size limit (50 MB)
 - 🔢 Concurrent download control (max 3)
+- 🚀 **Faster downloads** with concurrent fragments
 
 ## 📋 Requirements
 
@@ -136,21 +139,29 @@ Melodiλ/
 
 - **Max file size:** 50 MB (Telegram limitation)
 - **Concurrent downloads:** 3 simultaneously
-- **Audio format:** MP3 (quality: 9/10, where 0 = best)
+- **Audio format:** MP3
+- **Audio quality:** 0 (best quality, ~320kbps)
+- **Metadata:** Embedded title and thumbnail
 
 ### Customization
 
 Edit `src/Main.hs`:
 
 ```haskell
--- Change concurrent download limit
+-- Change concurrent download limit (line 73)
 if count >= 3  -- Change to desired number
 
--- Change audio quality (0-9, where 0 = best)
-"--audio-quality 9"  -- Change to desired value
+-- Change audio quality (line 147)
+"--audio-quality 0"  -- 0 = best, 9 = worst
 
--- Change format
+-- Change format (line 146)
 "--audio-format mp3"  -- Options: mp3, m4a, opus, vorbis, wav
+
+-- Disable thumbnail embedding (line 148)
+-- "--embed-thumbnail"  -- Comment out this line
+
+-- Disable metadata (line 149)
+-- "--add-metadata"  -- Comment out this line
 ```
 
 After changes, rebuild:
@@ -170,20 +181,12 @@ After changes, rebuild:
 
 The YouTube video is too long. Try:
 - A shorter video
-- Lower quality settings
 
 ### Error: "yt-dlp failed"
 
 1. Check that the link is valid
 2. Video might be unavailable or deleted
 3. Check your internet connection
-
-### Slow downloads
-
-This is normal for large files. Depends on:
-- Internet speed
-- Video size
-- YouTube server load
 
 ## 📚 Tech Stack
 
@@ -192,41 +195,20 @@ This is normal for large files. Depends on:
 - **Downloader:** yt-dlp
 - **Converter:** ffmpeg
 - **Build System:** Nix + Stack
-- **Package Manager:** Nix Flakes
-
-## 🤝 Contributing
-
-Pull requests are welcome! For major changes, please open an issue first.
+- **Package Manager:** Nix
 
 ## 📄 License
 
-BSD-3-Clause
+MIT License - see [LICENSE](LICENSE) file for details
 
 ## 🎯 Roadmap
 
 - [ ] Playlist support
 - [ ] Support for other platforms (SoundCloud, Spotify)
-
-## 💡 FAQ
-
-**Q: Can I download playlists?**  
-A: Not yet, only individual videos. Feature in development.
-
-**Q: What's the maximum video length?**  
-A: Limited by file size (50 MB). Usually ~30-60 minutes depending on quality.
-
-**Q: Does the bot save my requests?**  
-A: No, all files are deleted after sending.
-
-**Q: Can I use the bot commercially?**  
-A: Yes, but respect content copyright.
-
-## 🌟 Why Nix?
-
-- ✅ **Reproducible builds** - Works the same on any machine
-- ✅ **No dependency hell** - All dependencies managed automatically
-- ✅ **Isolated environment** - Doesn't pollute your system
-- ✅ **Easy deployment** - Just `./run.sh` on any machine with Nix
+- [x] Best audio quality
+- [x] Thumbnail extraction
+- [x] Video title metadata
+- [x] Faster downloads
 
 ---
 
