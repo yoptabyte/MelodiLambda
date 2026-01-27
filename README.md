@@ -45,6 +45,21 @@ experimental-features = nix-command flakes
 **Important:** Save the token in a secure place!
 
 ### 3. Clone and Setup
+## Building for Windows
+### Option 1: GitHub Actions (Recommended)
+The easiest way to get a Windows executable is to use the provided GitHub Actions workflow.
+1. Push your code to GitHub.
+2. Go to the **Actions** tab in your repository.
+3. Click on the latest **Windows Build** run.
+4. Download the `melodilambda-windows-exe` artifact.
+
+### Option 2: Nix Cross-Compilation (Experimental)
+You can try to cross-compile from Linux using Nix, but this may be unstable due to GHC/MinGW mismatches:
+```bash
+nix build .#windows
+```
+
+**Note:** For both methods, you will need to download `yt-dlp.exe` and `ffmpeg.exe` separately and place them in the same directory as the bot executable.
 
 ```bash
 # Clone the repository

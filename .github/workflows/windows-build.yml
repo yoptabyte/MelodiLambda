@@ -1,0 +1,41 @@
+name: Windows Build
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on Windows
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Haskell Stack
+      uses: haskell-actions/setup@v2
+      with:
+        enable-stack: true
+        stack-version: 'latest'
+
+    - name: Cache .stack
+      uses: actions/cache@v3
+      with:
+        path: |
+          C:\Users\runneradmin\AppData\Roaming\stack
+          .stack-work
+        key: ${{ runner.os }}-stack-${{ hashFiles('stack.yaml.lock', 'package.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-stack-
+
+    - name: Build
+      run: stack build --copy-bins --local-bin-path .
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: melodilambda-windows-exe
+        path: melodilambda.exe

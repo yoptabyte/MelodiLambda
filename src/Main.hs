@@ -76,7 +76,7 @@ handleAction (DownloadYouTube chatId url) model = model Bot.<# do
   if isYouTubeUrl url
     then do
       count <- liftIO $ readTVarIO (activeDownloads model)
-      if count >= 3
+      if count >= 30
         then Bot.replyText "⏳ Too many active downloads. Please wait..."
         else do
           Bot.replyText "🎧 Starting download, please wait..."
@@ -131,7 +131,7 @@ extractMetadata url = do
 
 -- | Parse metadata from JSON
 parseMetadata :: BL.ByteString -> IO VideoMetadata
-parseMetadata jsonData = 
+parseMetadata jsonData =
   case decode jsonData :: Maybe Value of
     Just (Object obj) -> return VideoMetadata
       { videoTitle = extractTitle obj
@@ -143,16 +143,16 @@ parseMetadata jsonData =
     extractTitle obj = case KM.lookup "title" obj of
       Just (String t) -> cleanTitle t
       _ -> "Unknown"
-    
+
     -- Remove all types of quotes and extra whitespace from title
     cleanTitle t = T.strip $ T.filter (not . isQuote) t
       where
         isQuote c = c `elem` (['\"', '\'', '"', '"', '«', '»', '„', '"'] ++ ['\x2018', '\x2019'])
-    
+
     extractThumbnail obj = case KM.lookup "thumbnail" obj of
       Just (String t) -> Just t
       _ -> Nothing
-    
+
     extractArtist obj = case KM.lookup "channel" obj of
       Just (String a) -> a
       _ -> case KM.lookup "uploader" obj of
@@ -165,10 +165,15 @@ downloadAudio url output = do
   let cmd = unwords
         [ "yt-dlp -x"
         , "--audio-format mp3"
-        , "--audio-quality 0"      -- Best quality
+        , "--audio-quality 0"      -- Best quality (320kbps)
         , "--embed-thumbnail"       -- Embed thumbnail in MP3
         , "--no-playlist"
-        , "--concurrent-fragments 4"  -- Faster download
+        , "--concurrent-fragments 32"  -- Maximum parallel downloads
+        , "--buffer-size 64K"       -- Much larger buffer
+        , "--http-chunk-size 50M"   -- Very large chunks
+        , "--retries 10"            -- More retries on failure
+        , "--fragment-retries 10"   -- More fragment retries
+        , "--throttled-rate 100K"   -- Bypass throttling
         , "-o", output
         , T.unpack url
         ]
@@ -181,10 +186,10 @@ downloadAudio url output = do
 cleanAudioMetadata :: FilePath -> Text -> IO ()
 cleanAudioMetadata filepath title = do
   let tempFile = filepath ++ ".tmp.mp3"  -- Use proper extension
-  
+
   -- Build ffmpeg command with UTF-8 title
   let titleStr = T.unpack title
-  let args = 
+  let args =
         [ "-i", filepath
         , "-map", "0:a"  -- Copy audio stream
         , "-map", "0:v?"  -- Copy video stream (thumbnail) if exists
@@ -194,15 +199,15 @@ cleanAudioMetadata filepath title = do
         , "-metadata", "title=" ++ titleStr
         , "-y", tempFile
         ]
-  
+
   -- Set UTF-8 locale for the process
-  let procConfig = (proc "ffmpeg" args) 
+  let procConfig = (proc "ffmpeg" args)
         { std_err = CreatePipe
         , env = Just [("LANG", "en_US.UTF-8"), ("LC_ALL", "en_US.UTF-8")]
         }
-  
+
   (exitCode, _, _) <- readCreateProcessWithExitCode procConfig ""
-  
+
   case exitCode of
     ExitSuccess -> do
       removeFile filepath
@@ -213,17 +218,17 @@ cleanAudioMetadata filepath title = do
 sendAudioWithMetadata :: Telegram.Token -> Telegram.ChatId -> FilePath -> VideoMetadata -> IO ()
 sendAudioWithMetadata token chatId filepath metadata = do
   clientEnv <- Telegram.defaultTelegramClientEnv token
-  
+
   -- Download and send thumbnail if available
   thumbnailPath <- maybe (return Nothing) (downloadThumbnail filepath) (videoThumbnail metadata)
-  
+
   let audio = configureAudio (Telegram.SomeChatId chatId) filepath metadata thumbnailPath
   result <- runClientM (Telegram.sendAudio audio) clientEnv
-  
+
   -- Cleanup thumbnail
   maybe (return ()) removeFile thumbnailPath
-  
-  either 
+
+  either
     (\err -> putStrLn $ "Failed to send audio: " ++ show err)
     (const $ return ())
     result
@@ -259,17 +264,17 @@ hash = foldl (\h c -> 33 * h + fromEnum c) 5381
 main :: IO ()
 main = do
   -- Try to load .env file (ignore if doesn't exist)
-  void $ (try (loadFile defaultConfig) :: IO (Either SomeException ()))
-  
+  void (try (loadFile defaultConfig) :: IO (Either SomeException ()))
+
   -- Get bot token from environment
   token <- getEnv "TELEGRAM_BOT_TOKEN"
-  
+
   -- Create downloads directory
   createDirectoryIfMissing True "downloads"
-  
+
   -- Initialize STM counter and start bot
   downloadsVar <- newTVarIO 0
   let telegramToken = Telegram.Token $ T.pack token
-  
+
   clientEnv <- Telegram.defaultTelegramClientEnv telegramToken
   Bot.startBot_ (bot downloadsVar telegramToken) clientEnv

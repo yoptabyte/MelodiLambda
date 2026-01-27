@@ -3,10 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-24.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, nixpkgs-stable, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
@@ -41,6 +42,22 @@
           '';
         };
 
+        # Windows Cross-Compilation
+        windows-exe = let
+          # Use stable nixpkgs for cross-compilation to avoid unstable breakages
+          pkgsCross = import nixpkgs-stable {
+            inherit system;
+            crossSystem = pkgs.lib.systems.examples.mingwW64;
+          };
+          
+          # Use default GHC from stable (usually 9.6 or 9.4 which works well)
+          haskellPackages = pkgsCross.haskellPackages.override {
+            overrides = self: super: {
+              # Add any specific overrides here if dependencies fail
+            };
+          };
+        in haskellPackages.callCabal2nix "melodilambda" ./. { };
+
         # Runtime dependencies
         runtimeDeps = with pkgs; [
           yt-dlp
@@ -51,6 +68,7 @@
         packages = {
           default = melodilambda;
           melodilambda = melodilambda;
+          windows = windows-exe;
           
           # Docker image
           docker = pkgs.dockerTools.buildLayeredImage {
