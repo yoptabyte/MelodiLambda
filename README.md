@@ -51,7 +51,8 @@ The easiest way to get a Windows executable is to use the provided GitHub Action
 1. Push your code to GitHub.
 2. Go to the **Actions** tab in your repository.
 3. Click on the latest **Windows Build** run.
-4. Download the `melodilambda-windows-exe` artifact.
+4. Download the `melodilambda-windows-bundle` artifact.
+5. Extract the archive. It will contain `melodilambda.exe`, `yt-dlp.exe`, and `ffmpeg.exe` ready to go.
 
 ### Option 2: Nix Cross-Compilation (Experimental)
 You can try to cross-compile from Linux using Nix, but this may be unstable due to GHC/MinGW mismatches:

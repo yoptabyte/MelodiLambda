@@ -34,8 +34,27 @@ jobs:
     - name: Build
       run: stack build --copy-bins --local-bin-path .
 
+    - name: Download yt-dlp
+      run: |
+        Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "yt-dlp.exe"
+
+    - name: Download ffmpeg
+      run: |
+        Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile "ffmpeg.zip"
+        Expand-Archive -Path "ffmpeg.zip" -DestinationPath "ffmpeg-temp"
+        $ffmpegPath = Get-ChildItem -Path "ffmpeg-temp" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
+        Move-Item -Path $ffmpegPath.FullName -Destination "."
+
+    - name: Prepare Release Bundle
+      run: |
+        New-Item -ItemType Directory -Force -Path "dist"
+        Move-Item -Path "melodilambda.exe" -Destination "dist\"
+        Move-Item -Path "yt-dlp.exe" -Destination "dist\"
+        Move-Item -Path "ffmpeg.exe" -Destination "dist\"
+        Copy-Item -Path ".env.example" -Destination "dist\.env.example"
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: melodilambda-windows-exe
-        path: melodilambda.exe
+        name: melodilambda-windows-bundle
+        path: dist/
