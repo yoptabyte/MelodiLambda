@@ -19,12 +19,14 @@ import System.Exit
 import Control.Concurrent.STM
 import Control.Concurrent.Async
 import Control.Exception (try, SomeException)
-import System.Environment (getEnv)
+import System.Environment (getEnv, lookupEnv)
 import Configuration.Dotenv (loadFile, defaultConfig)
 import GHC.Generics
 import Data.Aeson (Value(..), decode)
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy as BL
+import Data.Maybe (fromMaybe)
+import Data.List (isInfixOf)
 import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 
@@ -120,11 +122,11 @@ whenFileExists filePath action = do
 -- | Extract YouTube video metadata
 extractMetadata :: Text -> IO VideoMetadata
 extractMetadata url = do
-  let cmd = unwords
-        [ "yt-dlp --dump-json --no-playlist"
-        , T.unpack url
-        ]
-  (exitCode, stdout, _) <- readProcessWithExitCode "sh" ["-c", cmd] ""
+  (exitCode, stdout, _) <- runYtDlpWithFallback
+    [ "--dump-json"
+    , "--no-playlist"
+    , T.unpack url
+    ]
   case exitCode of
     ExitSuccess -> parseMetadata (BL.fromStrict $ TE.encodeUtf8 $ T.pack stdout)
     ExitFailure _ -> return $ VideoMetadata "Unknown" Nothing "Unknown"
@@ -162,25 +164,114 @@ parseMetadata jsonData =
 -- | Download audio using yt-dlp with best quality
 downloadAudio :: Text -> FilePath -> IO ()
 downloadAudio url output = do
-  let cmd = unwords
-        [ "yt-dlp -x"
-        , "--audio-format mp3"
-        , "--audio-quality 0"      -- Best quality (320kbps)
-        , "--embed-thumbnail"       -- Embed thumbnail in MP3
+  let args =
+        [ "-x"
+        , "--audio-format", "mp3"
+        , "--audio-quality", "0"     -- Best quality
+        , "--embed-thumbnail"
         , "--no-playlist"
-        , "--concurrent-fragments 32"  -- Maximum parallel downloads
-        , "--buffer-size 64K"       -- Much larger buffer
-        , "--http-chunk-size 50M"   -- Very large chunks
-        , "--retries 10"            -- More retries on failure
-        , "--fragment-retries 10"   -- More fragment retries
-        , "--throttled-rate 100K"   -- Bypass throttling
+        , "--concurrent-fragments", "32"
+        , "--buffer-size", "64K"
+        , "--http-chunk-size", "50M"
+        , "--retries", "10"
+        , "--fragment-retries", "10"
+        , "--throttled-rate", "100K"
         , "-o", output
         , T.unpack url
         ]
-  (exitCode, _, stderr) <- readProcessWithExitCode "sh" ["-c", cmd] ""
+  (exitCode, _, stderr) <- runYtDlpWithFallback args
   case exitCode of
     ExitSuccess -> return ()
-    ExitFailure _ -> error $ "yt-dlp failed: " ++ stderr
+    ExitFailure _ -> error $ unlines $
+      [ "yt-dlp failed:"
+      , stderr
+      , ""
+      ]
+      ++ formatYtDlpFailureHelp stderr
+
+-- | Resolve yt-dlp executable path (overrideable via env).
+getYtDlpExe :: IO FilePath
+getYtDlpExe = fromMaybe "yt-dlp" <$> lookupEnv "MELODILAMBDA_YTDLP"
+
+-- | Extra yt-dlp args, space-separated (no shell parsing).
+getYtDlpExtraArgs :: IO [String]
+getYtDlpExtraArgs = maybe [] words <$> lookupEnv "MELODILAMBDA_YTDLP_ARGS"
+
+runYtDlp :: [String] -> IO (ExitCode, String, String)
+runYtDlp args = do
+  exe <- getYtDlpExe
+  extra <- getYtDlpExtraArgs
+  readProcessWithExitCode exe (extra ++ args) ""
+
+shouldRetryWithFallback :: String -> Bool
+shouldRetryWithFallback stderr =
+  any (`isInfixOf` stderr)
+    [ "HTTP Error 403"
+    , "forcing SABR streaming"
+    , "missing a url"
+    ]
+
+isDnsResolutionError :: String -> Bool
+isDnsResolutionError stderr =
+  any (`isInfixOf` stderr)
+    [ "Failed to resolve"
+    , "Name or service not known"
+    , "Temporary failure in name resolution"
+    , "Could not resolve"
+    , "Could not contact DNS servers"
+    ]
+
+isYoutubeClientBreakage :: String -> Bool
+isYoutubeClientBreakage stderr =
+  any (`isInfixOf` stderr)
+    [ "HTTP Error 403"
+    , "forcing SABR streaming"
+    , "missing a url"
+    ]
+
+-- | yt-dlp sometimes breaks for certain YouTube "player clients".
+-- Try a small set of safer fallbacks only on known failure patterns.
+runYtDlpWithFallback :: [String] -> IO (ExitCode, String, String)
+runYtDlpWithFallback args = do
+  (exitCode, stdout, stderr) <- runYtDlp args
+  case exitCode of
+    ExitSuccess -> pure (exitCode, stdout, stderr)
+    ExitFailure _ ->
+      if not (shouldRetryWithFallback stderr)
+        then pure (exitCode, stdout, stderr)
+        else do
+          let fallbacks =
+                [ ["--force-ipv4"]
+                , ["--extractor-args", "youtube:player_client=android"]
+                , ["--force-ipv4", "--extractor-args", "youtube:player_client=android"]
+                , ["--extractor-args", "youtube:player_client=android,web"]
+                ]
+          tryFallbacks fallbacks (exitCode, stdout, stderr)
+  where
+    tryFallbacks [] lastResult = pure lastResult
+    tryFallbacks (prefix:rest) _ = do
+      result@(exitCode', _, _) <- runYtDlp (prefix ++ args)
+      case exitCode' of
+        ExitSuccess -> pure result
+        ExitFailure _ -> tryFallbacks rest result
+
+formatYtDlpFailureHelp :: String -> [String]
+formatYtDlpFailureHelp stderr
+  | isDnsResolutionError stderr =
+      [ "Tip: this looks like a DNS/network issue (yt-dlp can't resolve youtube.com)."
+      , "  - Check DNS in the same environment as the bot: `getent hosts www.youtube.com`."
+      , "  - Check your resolver: `cat /etc/resolv.conf`."
+      , "  - If you're on NixOS, ensure networking/DNS is configured (e.g. set `networking.nameservers`)."
+      ]
+  | isYoutubeClientBreakage stderr =
+      [ "Tip: YouTube frequently breaks older yt-dlp builds."
+      , "  - If you're using Nix, run `nix flake update` (or update your channels) and rebuild."
+      , "  - Or point the bot at a newer yt-dlp via `MELODILAMBDA_YTDLP=/path/to/yt-dlp`."
+      , "  - You can also pass extra flags via `MELODILAMBDA_YTDLP_ARGS` (e.g. `--extractor-args youtube:player_client=android`)."
+      ]
+  | otherwise =
+      [ "Tip: check the URL, availability, and your network connection."
+      ]
 
 -- | Clean audio metadata using ffmpeg - completely strip and rewrite ID3 tags
 cleanAudioMetadata :: FilePath -> Text -> IO ()

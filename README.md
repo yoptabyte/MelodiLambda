@@ -203,6 +203,11 @@ The YouTube video is too long. Try:
 1. Check that the link is valid
 2. Video might be unavailable or deleted
 3. Check your internet connection
+4. If the error mentions `Failed to resolve` / `Name or service not known`, that's DNS (not yt-dlp): check `cat /etc/resolv.conf` and `getent hosts www.youtube.com` in the same environment where the bot runs
+4. If you see `HTTP Error 403: Forbidden` or SABR-related warnings, update `yt-dlp` (it breaks frequently):
+   - Nix: run `nix flake update` (or update channels) and rebuild
+   - Or set `MELODILAMBDA_YTDLP=/path/to/yt-dlp` to use a newer binary
+   - Optional: set `MELODILAMBDA_YTDLP_ARGS="--extractor-args youtube:player_client=android"` to force a more compatible YouTube client
 
 ## 📚 Tech Stack
 
